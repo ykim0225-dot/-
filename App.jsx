@@ -218,8 +218,8 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const result = await window.storage.get('script-history');
-        if (result?.value) setHistory(JSON.parse(result.value));
+        const result = localStorage.getItem('script-history');
+        if (result) setHistory(JSON.parse(result));
       } catch {}
     })();
   }, []);
@@ -280,7 +280,7 @@ export default function App() {
     };
     const updated = [newEntry, ...history].slice(0, 20);
     setHistory(updated);
-    try { await window.storage.set('script-history', JSON.stringify(updated)); } catch {}
+    try { localStorage.setItem('script-history', JSON.stringify(updated)); } catch {}
   };
 
   const loadFromHistory = (entry) => {
@@ -301,7 +301,7 @@ export default function App() {
   const deleteFromHistory = async (id) => {
     const updated = history.filter(h => h.id !== id);
     setHistory(updated);
-    try { await window.storage.set('script-history', JSON.stringify(updated)); } catch {}
+    try { localStorage.setItem('script-history', JSON.stringify(updated)); } catch {}
   };
 
   const resetAll = () => {

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-3.1-pro-preview';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const RELIGION_CONFIG = {
@@ -340,7 +340,8 @@ export default function App() {
       contents: [{ role: 'user', parts }],
       generationConfig: {
         maxOutputTokens: 8192,
-        temperature: 0.9,
+        temperature: 1.0,
+        thinkingConfig: { thinkingBudget: 2048 }
       }
     };
 
@@ -358,7 +359,12 @@ export default function App() {
           return `오류: API 응답 실패 (${msg})`;
         }
         const data = await res.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        // thinking 파트 제외, 실제 응답 텍스트만 추출
+        const parts_resp = data?.candidates?.[0]?.content?.parts || [];
+        const text = parts_resp
+          .filter(p => !p.thought)
+          .map(p => p.text || '')
+          .join('');
         if (!text) return '오류: 응답 내용이 비어있습니다.';
         return text;
       } catch (e) {

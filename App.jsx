@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 
+const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
 const RELIGION_CONFIG = {
   christian: {
     name: '기독교', icon: '✝️', color: 'amber',
@@ -145,6 +148,9 @@ const parseJSON = (r) => {
 const getCharCount = (text) => (text || '').replace(/\s/g, '').length;
 
 export default function App() {
+  const [apiKey, setApiKey] = useState('');
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showApiKeyScreen, setShowApiKeyScreen] = useState(false);
   const [religion, setReligion] = useState('');
   const [titleMode, setTitleMode] = useState('');
   const [seoSubMode, setSeoSubMode] = useState('');
@@ -216,12 +222,12 @@ export default function App() {
   }, [religion]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const result = localStorage.getItem('script-history');
-        if (result) setHistory(JSON.parse(result));
-      } catch {}
-    })();
+    try {
+      const savedKey = localStorage.getItem('gemini-api-key');
+      if (savedKey) setApiKey(savedKey);
+      const result = localStorage.getItem('script-history');
+      if (result) setHistory(JSON.parse(result));
+    } catch {}
   }, []);
 
   // 통합 복사 함수
@@ -314,27 +320,50 @@ export default function App() {
     setShowResetConfirm(false); setReligion('');
   };
 
-  // API 호출
+  // Gemini API 호출
   const callAPI = async (prompt, sys = '', images = null, retries = 2) => {
+    const key = apiKey || localStorage.getItem('gemini-api-key') || '';
+    if (!key) return '오류: API 키가 설정되지 않았습니다.';
+
+    const url = `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${key}`;
+
+    // 메시지 파트 구성
+    const parts = [];
+    if (images && images.length > 0) {
+      images.forEach(img => {
+        parts.push({ inlineData: { mimeType: img.type, data: img.data } });
+      });
+    }
+    parts.push({ text: sys ? `${sys}\n\n${prompt}` : prompt });
+
+    const body = {
+      contents: [{ role: 'user', parts }],
+      generationConfig: {
+        maxOutputTokens: 8192,
+        temperature: 0.9,
+      }
+    };
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const content = images 
-          ? [...images.map(img => ({ type: 'image', source: { type: 'base64', media_type: img.type, data: img.data } })), { type: 'text', text: prompt }]
-          : prompt;
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8000, system: sys, messages: [{ role: 'user', content }] })
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
         });
         if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          const msg = errData?.error?.message || res.status;
           if (attempt < retries) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue; }
-          return `오류: API 응답 실패 (${res.status})`;
+          return `오류: API 응답 실패 (${msg})`;
         }
         const data = await res.json();
-        if (data.error) return `오류: ${data.error.message}`;
-        return data.content?.[0]?.text || '';
-      } catch (e) { 
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (!text) return '오류: 응답 내용이 비어있습니다.';
+        return text;
+      } catch (e) {
         if (attempt < retries) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue; }
-        return '오류: ' + e.message; 
+        return '오류: ' + e.message;
       }
     }
   };
@@ -546,11 +575,78 @@ export default function App() {
     <div onClick={onClick} className={`p-4 rounded-xl cursor-pointer transition-all ${selected ? `${cls.selected} border-2` : 'bg-slate-700/50 border border-slate-600 hover:border-amber-500/50'} ${className}`}>{children}</div>
   );
 
+  const saveApiKey = () => {
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed) return;
+    localStorage.setItem('gemini-api-key', trimmed);
+    setApiKey(trimmed);
+    setApiKeyInput('');
+    setShowApiKeyScreen(false);
+  };
+
+  const clearApiKey = () => {
+    localStorage.removeItem('gemini-api-key');
+    setApiKey('');
+    setShowApiKeyScreen(false);
+  };
+
+  // API 키 설정 화면
+  if (showApiKeyScreen) return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-4 flex flex-col items-center justify-center">
+      <div className="w-full max-w-md bg-slate-800/50 border border-slate-600 rounded-2xl p-8">
+        <h2 className="text-2xl font-bold text-center text-amber-400 mb-2">🔑 Gemini API 키 설정</h2>
+        <p className="text-slate-400 text-sm text-center mb-6">
+          Google AI Studio에서 발급받은 Gemini API 키를 입력하세요.<br />
+          키는 브라우저 로컬에만 저장되며 서버로 전송되지 않습니다.
+        </p>
+        {apiKey && (
+          <div className="bg-green-900/30 border border-green-500/40 rounded-xl p-3 mb-4 flex items-center justify-between">
+            <span className="text-green-400 text-sm">✅ 현재 키: {apiKey.slice(0, 8)}...{apiKey.slice(-4)}</span>
+            <button onClick={clearApiKey} className="text-red-400 text-xs hover:text-red-300 border border-red-500/40 px-2 py-1 rounded-lg">삭제</button>
+          </div>
+        )}
+        <input
+          type="text"
+          value={apiKeyInput}
+          onChange={e => setApiKeyInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && saveApiKey()}
+          placeholder="AIzaSy..."
+          className="w-full bg-slate-700/50 border border-slate-600 rounded-xl p-4 text-white mb-4 font-mono text-sm"
+          autoFocus
+        />
+        <button
+          onClick={saveApiKey}
+          disabled={!apiKeyInput.trim()}
+          className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-900 font-bold py-3 rounded-xl mb-3 disabled:opacity-40"
+        >
+          ✦ 저장하고 시작하기
+        </button>
+        <button onClick={() => setShowApiKeyScreen(false)} className="w-full border border-slate-600 text-slate-400 py-2 rounded-xl hover:bg-slate-700/50">
+          취소
+        </button>
+        <p className="text-slate-500 text-xs text-center mt-4">
+          🔗 키 발급: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-amber-400 underline">aistudio.google.com</a>
+        </p>
+      </div>
+    </div>
+  );
+
   // 종교 미선택
   if (!religion) return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-4 flex flex-col items-center justify-center">
       <h1 className="text-3xl font-bold text-center mb-2">✨ YouTube 스크립트 생성기</h1>
-      <p className="text-slate-400 mb-8">종교를 선택하세요</p>
+      <p className="text-slate-400 mb-2">종교를 선택하세요</p>
+      {/* API 키 상태 표시 */}
+      <div className="mb-6">
+        {apiKey
+          ? <button onClick={() => setShowApiKeyScreen(true)} className="flex items-center gap-2 bg-green-900/30 border border-green-500/40 text-green-400 px-4 py-2 rounded-full text-sm hover:bg-green-900/50">
+              ✅ Gemini API 연결됨 ({apiKey.slice(0,8)}...) · 변경
+            </button>
+          : <button onClick={() => setShowApiKeyScreen(true)} className="flex items-center gap-2 bg-red-900/30 border border-red-500/40 text-red-400 px-4 py-2 rounded-full text-sm hover:bg-red-900/50 animate-pulse">
+              ⚠️ API 키 미설정 — 클릭하여 설정
+            </button>
+        }
+      </div>
       <div className="flex gap-6">
         {[{ id: 'christian', icon: '✝️', name: '기독교', desc: '성경, 예수님, 목사, 교회', color: 'amber' }, { id: 'buddhist', icon: '☸️', name: '불교', desc: '불경, 부처님, 스님, 사찰', color: 'purple' }].map(r => (
           <div key={r.id} onClick={() => setReligion(r.id)} className={`cursor-pointer bg-slate-800/50 border border-${r.color}-500/30 rounded-2xl p-8 hover:border-${r.color}-500 hover:bg-${r.color}-500/10 transition-all text-center w-48`}>
@@ -593,6 +689,9 @@ export default function App() {
         <div className="flex gap-2">
           <button onClick={() => setShowHistory(true)} className={cls.outlineBtn}>📚 히스토리 ({history.length})</button>
           <button onClick={() => setReligion('')} className="border border-slate-600 text-slate-400 py-2 px-4 rounded-lg hover:bg-slate-700/50">🔄 종교 변경</button>
+          <button onClick={() => setShowApiKeyScreen(true)} className={`border py-2 px-3 rounded-lg text-xs ${apiKey ? 'border-green-500/40 text-green-400 hover:bg-green-500/10' : 'border-red-500/40 text-red-400 hover:bg-red-500/10 animate-pulse'}`}>
+            {apiKey ? `🔑 ${apiKey.slice(0,6)}...` : '⚠️ API 키 설정'}
+          </button>
         </div>
         {step > 1 && <button onClick={() => setShowResetConfirm(true)} className="border border-red-500/50 text-red-400 py-2 px-4 rounded-lg hover:bg-red-500/10">🔄 처음부터 다시</button>}
       </div>
